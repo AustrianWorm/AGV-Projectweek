@@ -1,0 +1,9 @@
+src/Control/
+src/Control/AgvControl:
+    running programm
+
+
+
+Possible Errors:
+
+Wrong Wlan: if can't access => a other person is already connected
