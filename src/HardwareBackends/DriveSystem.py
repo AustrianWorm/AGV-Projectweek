@@ -5,9 +5,6 @@ import time
 class DriveSystem:
     def __init__(self, base_url):
         self.base_url = base_url
-
-    def control_test(self):
-        return True
     
     # --- Stepper aktivieren/deaktivieren ---
     def enable_steppers(self):

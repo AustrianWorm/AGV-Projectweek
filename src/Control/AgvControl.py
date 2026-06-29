@@ -7,7 +7,7 @@ import requests
 class AgvControl:
     def __init__(self, url):
         print("Initializing AGV Control")
-        self.base_url = url
+        self.url = url
 
         print("Testing connection to AGV...")
         try:
@@ -16,7 +16,7 @@ class AgvControl:
         except Exception as e:
             print("Error connecting to AGV, read Documentation:", e)
 
-        self.movement_control = MovementControl(self.base_url)
+        self.movement_control = MovementControl(self.url)
         
     def run(self):
         print("AGV run")

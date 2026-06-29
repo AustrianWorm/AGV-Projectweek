@@ -1,7 +1,6 @@
 import cv2
 from datetime import datetime
 
-
 class OpenCVControl:
     def __init__(self, stream_url: str):
         self.stream_url = stream_url
@@ -55,10 +54,6 @@ class OpenCVControl:
     def stop_view(self):
         self._viewing = False
         cv2.destroyAllWindows()
-
-
-    def get_frame(self): # implement
-        return
 
 def debugCVControl(url):
     cam = OpenCVControl(stream_url=url)

@@ -1,9 +1,9 @@
 {
     "agv": {
-        "agv_url": "http://192.168.4.1/"
+        "agv_url": "http://192.168.4.1"
     },
     "camera": {
-        "stream_url": "http://10.250.150.224:8081/"
+        "stream_url": "http://10.250.150.224:8081"
     },
     "ArUcoCodes": {
         "ArUcoSelf": 44,

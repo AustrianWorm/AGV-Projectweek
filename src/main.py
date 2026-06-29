@@ -14,7 +14,7 @@ if __name__ == "__main__":
 
     if(args.mode == "debug-control"):
         print("Started in Debug Control Mode")
-        control = AgvControl(ip=config["agv"]["agv_url"])
+        control = AgvControl(url=config["agv"]["agv_url"])
         control.run()
     if(args.mode == "debug-image"):
         print("Started in Debug Image Mode")
