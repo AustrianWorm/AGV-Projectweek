@@ -1,5 +1,5 @@
-from HardwareControl.LineSensor import LineSensor
-from HardwareControl.DriveSystem import DriveSystem
+from HardwareBackends.LineSensor import LineSensor
+from HardwareBackends.DriveSystem import DriveSystem
 
 import json
 import time
