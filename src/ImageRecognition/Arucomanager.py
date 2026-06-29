@@ -21,7 +21,7 @@ RECT_WIDTH   = 800
 RECT_HEIGHT  = 600
 
 
-class ArUcoManager:
+class Arucomanager:
     def __init__(self, agv_marker_id: int = AGV_MARKER_ID, corner_ids: list[int] = None):
         self.agv_marker_id = agv_marker_id
         self.corner_ids    = corner_ids or CORNER_IDS

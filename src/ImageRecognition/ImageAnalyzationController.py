@@ -2,15 +2,34 @@ import cv2
 import numpy as np
 
 from OpenCvControl import OpenCVControl
-from ArUcoManager  import ArUcoManager
+from Arucomanager  import Arucomanager
 from WallManager   import WallManager
+
+# Lookup dictionary for ArUco marker IDs mapped to Team Numbers and Member Names
+TEAM_MAPPING = {
+    100: "Team 22: Wimmer Julian, Schacherbauer Moritz, Kohlmayer David",
+    97: "Team 21: Sigmund Lukas, Falch David",
+    33: "Team 20: Wimmer Jakob, Börner Leon",
+    69: "Team 19: Vorreiter Tobias, Berer Moritz",
+    16: "Team 16: Kolev Victor, Vasic Dorde",
+    42: "Team 15: Bandat Jonathan, Pavalacs Barna",
+    10: "Team 13: Hengstberger Simon, Herejk Simon",
+    9: "Team 12: Mühlbacher Paul, Enzinger Mark",
+    21: "Team 11: Zadny Raphael, Klinger Fabian",
+    73: "Team 9: Medland Ben, Klepp Bastian",
+    24: "Team 8: Barbu Stefan, Wührer-Silberer Simon Hermann",
+    5: "Team 5: Lauss Valentin, Neuhauser Lukas",
+    44: "Team 3: Wojakowski Jakub, Wurmhöringer David",
+    101: "Team 2: Bonitz Timo, Kastner Andreas",
+    67: "Team 1: Wolfsegger Johannes, Wohlfarter Florian"
+}
 
 
 class ImageAnalyzationController:
     def __init__(
         self,
         camera: OpenCVControl,
-        aruco:  ArUcoManager,
+        aruco:  Arucomanager,
         walls:  WallManager,
     ):
         self._camera = camera
@@ -70,18 +89,24 @@ class ImageAnalyzationController:
         )
 
     def _draw_markers(self, vis: np.ndarray) -> np.ndarray:
-        """Draw marker outlines and IDs onto a raw frame copy."""
+        """Draw marker outlines, IDs, and Team details onto a raw frame copy."""
         for marker_id, pose in self._aruco.markers.items():
             color = (0, 200, 0) if marker_id != self._aruco.agv_marker_id else (0, 100, 255)
             pts   = pose.corners.astype(int)
             cv2.polylines(vis, [pts], isClosed=True, color=color, thickness=2)
-            cv2.putText(vis, f"ID:{marker_id}",
+            
+            # Construct label string with appended team name/members if existing
+            label = f"ID:{marker_id}"
+            if marker_id in TEAM_MAPPING:
+                label += f" ({TEAM_MAPPING[marker_id]})"
+
+            cv2.putText(vis, label,
                         (pts[0][0], pts[0][1] - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
         return vis
 
     def _draw_rect_overlays(self, vis: np.ndarray) -> np.ndarray:
-        """Draw walls and AGV pose onto a rectified frame copy."""
+        """Draw walls, AGV pose, and Team details onto a rectified frame copy."""
         # Walls (cyan)
         for seg in self._walls.wall_segments:
             cv2.line(vis,
@@ -97,5 +122,12 @@ class ImageAnalyzationController:
             ey = int(cy - 40 * np.sin(np.radians(agv.heading)))
             cv2.circle(vis, (cx, cy), 6, (0, 100, 255), -1)
             cv2.arrowedLine(vis, (cx, cy), (ex, ey), (0, 60, 255), 2, tipLength=0.3)
+            
+            # Label on the top-down perspective screen
+            label = f"ID:{agv.id}"
+            if agv.id in TEAM_MAPPING:
+                label += f" ({TEAM_MAPPING[agv.id]})"
+            cv2.putText(vis, label, (cx - 15, cy - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 100, 255), 1)
 
         return vis
