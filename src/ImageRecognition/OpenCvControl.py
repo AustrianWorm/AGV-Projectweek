@@ -81,6 +81,10 @@ class OpenCVControl:
         self._viewing = False
         cv2.destroyAllWindows()
 
+
+    def get_frame(self): # implement
+        return
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
