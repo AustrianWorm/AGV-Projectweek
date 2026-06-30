@@ -33,19 +33,22 @@ class ImageAnalyzationController:
         camera: OpenCVControl,
         aruco:  Arucomanager,
         walls:  WallManager,
+        goal_marker_id: int = GOAL_MARKER_ID,
     ):
-        self._camera = camera
-        self._aruco  = aruco
-        self._walls  = walls
+        self._camera   = camera
+        self._aruco    = aruco
+        self._walls    = walls
+        self._goal_id  = goal_marker_id
 
         self.raw_frame: np.ndarray | None = None
+        self.path:      list[tuple[float, float]] = []
 
     # ── Public ────────────────────────────────────────────────────────────────
 
     def start_image_analysis(self) -> bool:
         """
         Run one full analysis cycle, entirely in raw (unrectified) camera space:
-        grab → detect markers → detect walls/border → mark AGV hitboxes.
+        grab → detect markers → detect walls/border → mark AGV hitboxes → plan path.
         Returns True if a frame was successfully grabbed.
         """
         frame = self._camera.get_frame()
@@ -57,24 +60,36 @@ class ImageAnalyzationController:
 
         border_corners = self._field_border_corners()
         self._walls.detect_walls(frame, border_corners)
-        self._walls.add_agv_obstacles(self._agv_positions(), frame.shape)
+        self._walls.add_agv_obstacles(self._other_agv_positions(), frame.shape)
+        self._compute_path(frame.shape)
         return True
 
     def stop_image_analysis(self):
         """Clear analysis state."""
         self._aruco.stop_aruco_detection()
         self.raw_frame = None
+        self.path      = []
 
     def draw_debug(self) -> np.ndarray:
-        """Return the raw frame annotated with markers, walls/border, and AGV hitboxes."""
+        """Return the raw frame annotated with markers, walls/border, AGV hitboxes, and path."""
         vis = self.raw_frame.copy() if self.raw_frame is not None else np.zeros((480, 640, 3), np.uint8)
         self._draw_markers(vis)
         self._draw_walls(vis)
         self._draw_agv_hitboxes(vis)
         self._draw_goal(vis)
+        self._draw_path(vis)
         return vis
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _compute_path(self, frame_shape: tuple[int, int, int]):
+        """Re-plan the shortest route to the goal every cycle (corrects for drift as the AGV moves)."""
+        agv  = self._aruco.get_agv()
+        goal = self._aruco.markers.get(self._goal_id)
+        if agv is None or goal is None:
+            self.path = []
+            return
+        self.path = self._walls.find_path(agv.center, goal.center, frame_shape[:2])
 
     def _field_border_corners(self) -> list[tuple[float, float]] | None:
         """Centers of the four corner markers, in raw-frame pixels, if all are visible."""
@@ -87,7 +102,17 @@ class ImageAnalyzationController:
         return [
             pose.center
             for marker_id, pose in self._aruco.markers.items()
-            if marker_id not in self._aruco.corner_ids and marker_id != GOAL_MARKER_ID
+            if marker_id not in self._aruco.corner_ids and marker_id != self._goal_id
+        ]
+
+    def _other_agv_positions(self) -> list[tuple[float, float]]:
+        """Same as above but excludes our own AGV, so it never blocks its own path-planning start."""
+        return [
+            pose.center
+            for marker_id, pose in self._aruco.markers.items()
+            if marker_id not in self._aruco.corner_ids
+            and marker_id != self._goal_id
+            and marker_id != self._aruco.agv_marker_id
         ]
 
     def _draw_markers(self, vis: np.ndarray):
@@ -102,8 +127,8 @@ class ImageAnalyzationController:
                 label += f" ({TEAM_MAPPING[marker_id]})"
 
             cv2.putText(vis, label,
-                        (pts[0][0], pts[0][1] - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                        (pts[0][0], pts[0][1] - 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.1, color, 3)
 
     def _draw_walls(self, vis: np.ndarray):
         """Draw detected tape walls and field border as bold blue lines, in-place."""
@@ -121,10 +146,18 @@ class ImageAnalyzationController:
 
     def _draw_goal(self, vis: np.ndarray):
         """Highlight the goal marker in green, in-place."""
-        goal = self._aruco.markers.get(GOAL_MARKER_ID)
+        goal = self._aruco.markers.get(self._goal_id)
         if goal is None:
             return
         gx, gy = int(goal.center[0]), int(goal.center[1])
         cv2.circle(vis, (gx, gy), 16, (0, 220, 0), 3)
-        cv2.putText(vis, "GOAL", (gx - 18, gy - 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 0), 1)
+        cv2.putText(vis, "GOAL", (gx - 40, gy - 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 220, 0), 3)
+
+    def _draw_path(self, vis: np.ndarray):
+        """Draw the planned route to the goal as a chain of short magenta lines, in-place."""
+        if len(self.path) < 2:
+            return
+        pts = [(int(x), int(y)) for x, y in self.path]
+        for p1, p2 in zip(pts, pts[1:]):
+            cv2.line(vis, p1, p2, (255, 0, 255), 4)

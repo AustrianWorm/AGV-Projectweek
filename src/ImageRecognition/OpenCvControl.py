@@ -1,3 +1,5 @@
+import json
+
 import cv2
 from ImageRecognition.Arucomanager import Arucomanager
 
@@ -72,15 +74,29 @@ class OpenCVControl:
 
 # ── Debug entry point ─────────────────────────────────────────────────────────
 
-def debugCVControl(url: str):
+def _load_config(path: str = "config.json") -> dict:
+    """Read the team's ArUco-ID configuration file."""
+    with open(path) as f:
+        return json.load(f)
+
+
+def _own_and_goal_ids(config: dict) -> tuple[int, int]:
+    """Own AGV marker ID and goal marker ID, as set in config.json."""
+    codes = config["ArUcoCodes"]
+    return codes["ArUcoSelf"], codes["goal"]
+
+
+def debugCVControl(url: str, config_path: str = "config.json"):
     """Run the full image-recognition pipeline against the live stream and show it."""
     from ImageRecognition.ImageAnalyzationController import ImageAnalyzationController
     from ImageRecognition.WallManager import WallManager
 
+    own_id, goal_id = _own_and_goal_ids(_load_config(config_path))
+
     cam      = OpenCVControl(stream_url=url)
-    aruco    = Arucomanager()
+    aruco    = Arucomanager(agv_marker_id=own_id)
     walls    = WallManager()
-    pipeline = ImageAnalyzationController(cam, aruco, walls)
+    pipeline = ImageAnalyzationController(cam, aruco, walls, goal_marker_id=goal_id)
     cam.connect()
 
     cv2.namedWindow("Raw", cv2.WINDOW_NORMAL)

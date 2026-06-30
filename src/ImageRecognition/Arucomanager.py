@@ -63,6 +63,14 @@ class Arucomanager:
 def _make_detector() -> cv2.aruco.ArucoDetector:
     aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
     params     = cv2.aruco.DetectorParameters()
+    # Wider tolerance: catches markers at odd angles, blur, or in low contrast
+    params.adaptiveThreshWinSizeMin    = 3
+    params.adaptiveThreshWinSizeMax    = 53
+    params.adaptiveThreshWinSizeStep   = 4
+    params.minMarkerPerimeterRate      = 0.01
+    params.polygonalApproxAccuracyRate = 0.05
+    params.errorCorrectionRate         = 0.8
+    params.cornerRefinementMethod      = cv2.aruco.CORNER_REFINE_SUBPIX
     return cv2.aruco.ArucoDetector(aruco_dict, params)
 
 

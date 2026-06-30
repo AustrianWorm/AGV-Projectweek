@@ -15,6 +15,14 @@ _BLUE_UPPER     = np.array([112, 255, 255])
 _WALL_INFLATE_PX = 8   # bigger wall hitbox
 _AGV_HITBOX_PX   = 60  # bigger AGV hitbox (collision radius, raw-frame px)
 
+# Temporal confidence: a pixel needs a few confirming detections before it counts
+# as a real wall, and "forgets" it (likely a one-off false detection) if it isn't
+# seen again for a short time.
+_CONF_MAX       = 15
+_CONF_HIT       = 3
+_CONF_MISS      = 1
+_CONF_THRESHOLD = 5
+
 
 class WallManager:
     def __init__(self, grid_cols: int = 80, grid_rows: int = 50):
@@ -23,10 +31,12 @@ class WallManager:
 
         self.wall_segments: list[WallSegment] = []
         self.occupancy_grid: np.ndarray = np.zeros((grid_rows, grid_cols), dtype=np.uint8)
+        self._wall_confidence: np.ndarray | None = None  # per-pixel confidence, builds/decays over frames
 
     def detect_walls(self, image: np.ndarray, border_corners: list[tuple[float, float]] | None = None):
         mask = self._threshold_blue(image)
-        self.wall_segments = self._find_segments(mask)
+        confirmed_mask = self._update_confidence(mask)
+        self.wall_segments = self._find_segments(confirmed_mask)
         if border_corners is not None:
             self.wall_segments += self._border_segments(border_corners)
         self.occupancy_grid = self._rasterize(self.wall_segments, image.shape)
@@ -51,6 +61,19 @@ class WallManager:
         goal_cell  = _px_to_cell(goal_px,  W, H, self.grid_cols, self.grid_rows)
         cell_path  = _astar(self.occupancy_grid, start_cell, goal_cell)
         return [_cell_to_px(c, W, H, self.grid_cols, self.grid_rows) for c in cell_path]
+
+    def _update_confidence(self, mask: np.ndarray) -> np.ndarray:
+        """Build confidence on repeated hits, decay on misses; return the confirmed-wall mask."""
+        hit = mask > 0
+        if self._wall_confidence is None or self._wall_confidence.shape != mask.shape:
+            self._wall_confidence = np.zeros(mask.shape, dtype=np.int16)
+
+        self._wall_confidence = np.clip(
+            self._wall_confidence + np.where(hit, _CONF_HIT, -_CONF_MISS),
+            0, _CONF_MAX,
+        ).astype(np.int16)
+
+        return ((self._wall_confidence >= _CONF_THRESHOLD).astype(np.uint8)) * 255
 
     def _threshold_blue(self, image: np.ndarray) -> np.ndarray:
         hsv  = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)

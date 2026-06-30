@@ -6,10 +6,11 @@
         "stream_url": "http://10.250.150.224:8081"
     },
     "ArUcoCodes": {
-        "ArUcoSelf": 44,
+        "ArUcoSelf": 97,
         "corner1": 1,
         "corner2": 2,
         "corner3": 3,
-        "corner4": 4
+        "corner4": 4,
+        "goal": 73
     }
 }
