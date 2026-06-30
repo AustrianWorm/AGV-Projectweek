@@ -72,10 +72,7 @@ class MovementControl:
             time.sleep(SENSOR_SENSE_PAUSE)
         return
     
-    def straight_stop(self):
-        return
-    
-    def straight(self):
+    def straight_until_line(self):
         print("Driving straight until line is detected")
         line_sensor = LineSensor(base_url=self.base_url)
         drive_system = DriveSystem(base_url=self.base_url)

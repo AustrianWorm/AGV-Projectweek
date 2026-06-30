@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from dataclasses import dataclass
 
+
 @dataclass
 class MarkerPose:
     id: int
@@ -9,31 +10,25 @@ class MarkerPose:
     heading: float                 # degrees
     corners: np.ndarray           # (4,2) raw corners, kept for re-warping
 
-# String-to-CV2 constant dictionary lookup map
-ARUCO_DICT_MAPPING = {
-    "DICT_4X4_50": cv2.aruco.DICT_4X4_50,
-    "DICT_4X4_100": cv2.aruco.DICT_4X4_100,
-    "DICT_4X4_250": cv2.aruco.DICT_4X4_250,
-    "DICT_4X4_1000": cv2.aruco.DICT_4X4_1000,
-    "DICT_5X5_50": cv2.aruco.DICT_5X5_50,
-    "DICT_5X5_100": cv2.aruco.DICT_5X5_100,
-    "DICT_6X6_100": cv2.aruco.DICT_6X6_100,
-}
+
+# ArUco marker ID of this team's AGV — set before use
+# Corner marker IDs for the four field corners (TL, TR, BR, BL)
+CORNER_IDS = [1, 2, 3, 4]   # update on the day
+AGV_MARKER_ID = 9           # Self: ArUcoMarker 44
+
+ARUCO_DICT   = cv2.aruco.DICT_4X4_100
+RECT_WIDTH   = 800
+RECT_HEIGHT  = 600
+
 
 class Arucomanager:
-    def __init__(self, config: dict):
-        codes_cfg = config.get("ArUcoCodes", {})
-        aruco_cfg = config.get("aruco_settings", {})
+    def __init__(self, agv_marker_id: int = AGV_MARKER_ID, corner_ids: list[int] = None):
+        self.agv_marker_id = agv_marker_id
+        self.corner_ids    = corner_ids or CORNER_IDS
+        self.rect_width    = RECT_WIDTH
+        self.rect_height   = RECT_HEIGHT
 
-        self.agv_marker_id = codes_cfg.get("ArUcoSelf", 9)
-        self.corner_ids    = codes_cfg.get("corners", [1, 2, 3, 4])
-        self.rect_width    = aruco_cfg.get("rect_width", 800)
-        self.rect_height   = aruco_cfg.get("rect_height", 600)
-
-        dict_str = aruco_cfg.get("dict", "DICT_4X4_100")
-        aruco_dict_const = ARUCO_DICT_MAPPING.get(dict_str, cv2.aruco.DICT_4X4_100)
-
-        self._detector  = _make_detector(aruco_dict_const)
+        self._detector  = _make_detector()
         self.markers:   dict[int, MarkerPose] = {}
         self.warp_matrix: np.ndarray | None   = None
 
@@ -65,9 +60,10 @@ class Arucomanager:
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
-def _make_detector(aruco_dict_const) -> cv2.aruco.ArucoDetector:
-    aruco_dict = cv2.aruco.getPredefinedDictionary(aruco_dict_const)
+def _make_detector() -> cv2.aruco.ArucoDetector:
+    aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
     params     = cv2.aruco.DetectorParameters()
+    # Wider tolerance: catches markers at odd angles, blur, or in low contrast
     params.adaptiveThreshWinSizeMin    = 3
     params.adaptiveThreshWinSizeMax    = 53
     params.adaptiveThreshWinSizeStep   = 4
@@ -86,6 +82,7 @@ def _detect_markers(frame: np.ndarray, detector: cv2.aruco.ArucoDetector) -> dic
     for corners, marker_id in zip(corners_list, ids.flatten()):
         pts    = corners[0]                        # shape (4, 2)
         center = pts.mean(axis=0)
+        # heading: angle of the top edge (corner 0 → corner 1)
         dx      = pts[1][0] - pts[0][0]
         dy      = pts[1][1] - pts[0][1]
         heading = -np.degrees(np.arctan2(dy, dx))
@@ -104,7 +101,9 @@ def _compute_warp(
     width: int,
     height: int,
 ) -> np.ndarray:
-    """Perspective transform from four corner markers → top-down rectangle."""
+    """Perspective transform from four corner markers → top-down rectangle.
+    corner_ids order: [TL, TR, BR, BL]
+    """
     src = np.array(
         [markers[cid].center for cid in corner_ids],
         dtype=np.float32,
