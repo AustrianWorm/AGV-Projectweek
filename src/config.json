@@ -1,16 +1,30 @@
 {
-    "agv": {
-        "agv_url": "http://192.168.4.1"
-    },
     "camera": {
         "stream_url": "http://10.250.150.224:8081"
     },
+    "agv": {
+        "agv_url": "http://192.168.4.1"
+    },
     "ArUcoCodes": {
-        "ArUcoSelf": 97,
-        "corner1": 1,
-        "corner2": 2,
-        "corner3": 3,
-        "corner4": 4,
-        "goal": 6
+        "ArUcoSelf": 24,
+        "goal": 73,
+        "corners": [1, 2, 3, 4]
+    },
+    "aruco_settings": {
+        "dict": "DICT_4X4_100",
+        "rect_width": 800,
+        "rect_height": 600
+    },
+    "wall_detection": {
+        "grid_cols": 80,
+        "grid_rows": 50,
+        "blue_lower": [100, 110, 120],
+        "blue_upper": [112, 255, 255],
+        "wall_inflate_px": 1,
+        "agv_hitbox_px": 60,
+        "conf_max": 15,
+        "conf_hit": 3,
+        "conf_miss": 1,
+        "conf_threshold": 5
     }
 }

@@ -1,6 +1,8 @@
+import argparse
 import json
 
 import cv2
+import numpy as np
 from ImageRecognition.Arucomanager import Arucomanager
 
 # Lookup dictionary for ArUco marker IDs mapped to Team Numbers and Member Names
@@ -81,9 +83,16 @@ def _load_config(path: str = "config.json") -> dict:
 
 
 def _own_and_goal_ids(config: dict) -> tuple[int, int]:
-    """Own AGV marker ID and goal marker ID, as set in config.json."""
-    codes = config["ArUcoCodes"]
-    return codes["ArUcoSelf"], codes["goal"]
+    """Own AGV marker ID and goal marker ID, supporting multiple config formats."""
+    if "ArUcoCodes" in config:
+        codes = config["ArUcoCodes"]
+        return codes.get("ArUcoSelf", 9), codes.get("goal", 10)
+    elif "agv" in config:
+        agv_config = config["agv"]
+        own_id = agv_config.get("ArUcoSelf", config.get("ArUcoSelf", 9))
+        goal_id = agv_config.get("goal", config.get("goal", 10))
+        return own_id, goal_id
+    return 9, 10
 
 
 def debugCVControl(url: str, config_path: str = "config.json"):
@@ -111,3 +120,28 @@ def debugCVControl(url: str, config_path: str = "config.json"):
 
     pipeline.stop_image_analysis()
     cam.disconnect()
+
+
+# ── Main Runnable block ───────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    # 1. Setup argparse to dynamically parse config location if required
+    parser = argparse.ArgumentParser(description="Run OpenCV Control Pipeline using config specs.")
+    parser.add_argument(
+        "--config", 
+        type=str, 
+        default="config.json", 
+        help="Path to the configuration file (default: config.json)"
+    )
+    args = parser.parse_args()
+
+    # 2. Open and load configuration as instructed
+    with open(args.config) as f:
+        config = json.load(f)
+
+    # 3. Safely extract stream URL from config["agv"]["agv_url"]
+    stream_url = config["agv"]["agv_url"]
+    print(f"Connecting to stream URL from config: {stream_url}")
+
+    # 4. Trigger the main visualization pipeline entry point
+    debugCVControl(url=stream_url, config_path=args.config)

@@ -3,36 +3,32 @@ import numpy as np
 from dataclasses import dataclass
 import heapq
 
-
 @dataclass
 class WallSegment:
     start: tuple[float, float]   
     end:   tuple[float, float]
 
-
-_BLUE_LOWER     = np.array([100, 110, 120])   # narrow band around tape color #5199ed
-_BLUE_UPPER     = np.array([112, 255, 255])
-_WALL_INFLATE_PX = 8   # bigger wall hitbox
-_AGV_HITBOX_PX   = 60  # bigger AGV hitbox (collision radius, raw-frame px)
-
-# Temporal confidence: a pixel needs a few confirming detections before it counts
-# as a real wall, and "forgets" it (likely a one-off false detection) if it isn't
-# seen again for a short time.
-_CONF_MAX       = 15
-_CONF_HIT       = 3
-_CONF_MISS      = 1
-_CONF_THRESHOLD = 5
-
-
 class WallManager:
-    def __init__(self, grid_cols: int = 80, grid_rows: int = 50):
-        self.grid_cols = grid_cols
-        self.grid_rows = grid_rows
+    def __init__(self, config: dict):
+        w_cfg = config.get("wall_detection", {})
+
+        self.grid_cols = w_cfg.get("grid_cols", 80)
+        self.grid_rows = w_cfg.get("grid_rows", 50)
+
+        self._blue_lower     = np.array(w_cfg.get("blue_lower", [100, 110, 120]))
+        self._blue_upper     = np.array(w_cfg.get("blue_upper", [112, 255, 255]))
+        self._wall_inflate_px = w_cfg.get("wall_inflate_px", 8)
+        self._agv_hitbox_px   = w_cfg.get("agv_hitbox_px", 60)
+
+        self._conf_max       = w_cfg.get("conf_max", 15)
+        self._conf_hit       = w_cfg.get("conf_hit", 3)
+        self._conf_miss      = w_cfg.get("conf_miss", 1)
+        self._conf_threshold = w_cfg.get("conf_threshold", 5)
 
         self.wall_segments: list[WallSegment] = []
-        self.occupancy_grid: np.ndarray = np.zeros((grid_rows, grid_cols), dtype=np.uint8)
-        self._wall_confidence: np.ndarray | None = None  # per-pixel confidence, builds/decays over frames
-        self._border_corners: list[tuple[float, float]] | None = None  # locked in once seen, kept forever
+        self.occupancy_grid: np.ndarray = np.zeros((self.grid_rows, self.grid_cols), dtype=np.uint8)
+        self._wall_confidence: np.ndarray | None = None  
+        self._border_corners: list[tuple[float, float]] | None = None  
 
     def detect_walls(self, image: np.ndarray, border_corners: list[tuple[float, float]] | None = None):
         mask = self._threshold_blue(image)
@@ -40,17 +36,17 @@ class WallManager:
         self.wall_segments = self._find_segments(confirmed_mask)
 
         if border_corners is not None:
-            self._border_corners = border_corners  # refresh while visible
+            self._border_corners = border_corners  
         if self._border_corners is not None:
             self.wall_segments += self._border_segments(self._border_corners)
 
         self.occupancy_grid = self._rasterize(self.wall_segments, image.shape, self._border_corners)
 
     def add_agv_obstacles(self, positions: list[tuple[float, float]], image_shape: tuple[int, int]):
-        """Mark other AGVs as round obstacles (bigger hitbox) on the occupancy grid."""
+        """Mark other AGVs as round obstacles on the occupancy grid."""
         H, W = image_shape[:2]
         cell_px  = ((W / self.grid_cols) + (H / self.grid_rows)) / 2.0
-        radius   = max(1, int(_AGV_HITBOX_PX / cell_px))
+        radius   = max(1, int(self._agv_hitbox_px / cell_px))
         for pos in positions:
             cell = _px_to_cell(pos, W, H, self.grid_cols, self.grid_rows)
             cv2.circle(self.occupancy_grid, cell, radius, color=1, thickness=-1)
@@ -64,32 +60,40 @@ class WallManager:
         H, W       = image_shape
         start_cell = _px_to_cell(start_px, W, H, self.grid_cols, self.grid_rows)
         goal_cell  = _px_to_cell(goal_px,  W, H, self.grid_cols, self.grid_rows)
-        cell_path  = _astar(self.occupancy_grid, start_cell, goal_cell)
+        
+        # Pass 1: Try to find a normal clean route
+        cell_path  = _astar(self.occupancy_grid, start_cell, goal_cell, allow_walls=False)
+        
+        # Pass 2 Fallback: If map is blocked, re-calculate allowing wall penetration
+        if not cell_path:
+            print("[WallManager] Map blocked! Re-calculating path through walls...")
+            cell_path = _astar(self.occupancy_grid, start_cell, goal_cell, allow_walls=True)
+            
         return [_cell_to_px(c, W, H, self.grid_cols, self.grid_rows) for c in cell_path]
 
+    # ── Internal ──────────────────────────────────────────────────────────────
+
     def _update_confidence(self, mask: np.ndarray) -> np.ndarray:
-        """Build confidence on repeated hits, decay on misses; return the confirmed-wall mask."""
         hit = mask > 0
         if self._wall_confidence is None or self._wall_confidence.shape != mask.shape:
             self._wall_confidence = np.zeros(mask.shape, dtype=np.int16)
 
         self._wall_confidence = np.clip(
-            self._wall_confidence + np.where(hit, _CONF_HIT, -_CONF_MISS),
-            0, _CONF_MAX,
+            self._wall_confidence + np.where(hit, self._conf_hit, -self._conf_miss),
+            0, self._conf_max,
         ).astype(np.int16)
 
-        return ((self._wall_confidence >= _CONF_THRESHOLD).astype(np.uint8)) * 255
+        return ((self._wall_confidence >= self._conf_threshold).astype(np.uint8)) * 255
 
     def _threshold_blue(self, image: np.ndarray) -> np.ndarray:
         hsv  = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, _BLUE_LOWER, _BLUE_UPPER)
+        mask = cv2.inRange(hsv, self._blue_lower, self._blue_upper)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         mask   = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  kernel, iterations=1)
         mask   = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
         return mask
 
     def _find_segments(self, mask: np.ndarray) -> list[WallSegment]:
-        """One wall segment per straight piece of tape (e.g. a triangle yields 3 segments)."""
         skeleton = _skeletonize(mask)
         lines = cv2.HoughLinesP(skeleton, 1, np.pi / 180,
                                  threshold=20, minLineLength=15, maxLineGap=8)
@@ -101,7 +105,6 @@ class WallManager:
         ]
 
     def _border_segments(self, corners: list[tuple[float, float]]) -> list[WallSegment]:
-        """Outer field boundary as a quad connecting the 4 corner-marker centers (TL,TR,BR,BL)."""
         return [
             WallSegment(start=corners[i], end=corners[(i + 1) % 4])
             for i in range(4)
@@ -121,13 +124,12 @@ class WallManager:
             p2 = _px_to_cell(seg.end,   W, H, self.grid_cols, self.grid_rows)
             cv2.line(grid, p1, p2, color=1, thickness=2)
 
-        kernel = np.ones((_WALL_INFLATE_PX * 2 + 1,) * 2, dtype=np.uint8)
+        kernel = np.ones((self._wall_inflate_px * 2 + 1,) * 2, dtype=np.uint8)
         grid   = cv2.dilate(grid, kernel, iterations=1)
 
         if border_corners is not None:
             grid = self._block_outside_border(grid, border_corners, W, H)
         else:
-            # Border not known yet: fall back to walling off the raw image edge.
             grid[0, :]  = 1
             grid[-1, :] = 1
             grid[:, 0]  = 1
@@ -138,7 +140,6 @@ class WallManager:
     def _block_outside_border(
         self, grid: np.ndarray, border_corners: list[tuple[float, float]], W: int, H: int,
     ) -> np.ndarray:
-        """Mark every cell outside the field-border quad as a wall, so the path can't leave the field."""
         quad = np.array(
             [_px_to_cell(c, W, H, self.grid_cols, self.grid_rows) for c in border_corners],
             dtype=np.int32,
@@ -149,28 +150,30 @@ class WallManager:
         return grid
 
 
+# ── Global Helper Functions ───────────────────────────────────────────────────
+
 def _skeletonize(mask: np.ndarray) -> np.ndarray:
-    """Thin tape blobs to 1px centerlines so Hough finds one clean line per edge."""
     try:
         return cv2.ximgproc.thinning(mask)
     except (AttributeError, cv2.error):
         return mask
-
 
 def _px_to_cell(px, W, H, cols, rows) -> tuple[int, int]:
     col = int(np.clip(px[0] / W * cols, 0, cols - 1))
     row = int(np.clip(px[1] / H * rows, 0, rows - 1))
     return (col, row)
 
-
 def _cell_to_px(cell, W, H, cols, rows) -> tuple[float, float]:
     return ((cell[0] + 0.5) / cols * W, (cell[1] + 0.5) / rows * H)
 
 
-def _astar(grid: np.ndarray, start: tuple[int, int], goal: tuple[int, int]) -> list[tuple[int, int]]:
+# ── Dynamic Penalty A* Pathfinding ────────────────────────────────────────────
+
+def _astar(grid: np.ndarray, start: tuple[int, int], goal: tuple[int, int], allow_walls: bool = False) -> list[tuple[int, int]]:
     rows, cols = grid.shape
 
     def h(a, b):
+        # Manhattan distance heuristic
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     neighbours = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
@@ -180,6 +183,7 @@ def _astar(grid: np.ndarray, start: tuple[int, int], goal: tuple[int, int]) -> l
 
     while open_heap:
         _, g, current = heapq.heappop(open_heap)
+        
         if current == goal:
             path = []
             while current in came_from:
@@ -188,15 +192,30 @@ def _astar(grid: np.ndarray, start: tuple[int, int], goal: tuple[int, int]) -> l
             path.append(start)
             path.reverse()
             return path
+            
         if g > g_score.get(current, float("inf")):
             continue
+            
         for dc, dr in neighbours:
             nb = (current[0] + dc, current[1] + dr)
+            
+            # Boundary check
             if not (0 <= nb[0] < cols and 0 <= nb[1] < rows):
                 continue
+                
+            # Base kinematic travel weight cost (Diagonal vs Cardinal step)
+            step_weight = 1.414 if (dc and dr) else 1.0
+            
+            # Obstacle check
             if grid[nb[1], nb[0]]:
-                continue
-            ng = g + (1.414 if dc and dr else 1.0)
+                if not allow_walls:
+                    # In normal strict mode, skip this neighbor entirely
+                    continue
+                else:
+                    # In fallback mode, add an enormous penalty to crossing this cell
+                    step_weight += 100.0
+            
+            ng = g + step_weight
             if ng < g_score.get(nb, float("inf")):
                 g_score[nb]   = ng
                 came_from[nb] = current
