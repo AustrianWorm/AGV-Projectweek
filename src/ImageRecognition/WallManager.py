@@ -10,9 +10,10 @@ class WallSegment:
     end:   tuple[float, float]
 
 
-_BLUE_LOWER     = np.array([100,  80,  50])
-_BLUE_UPPER     = np.array([130, 255, 255])
-_WALL_INFLATE_PX = 2
+_BLUE_LOWER     = np.array([100, 110, 120])   # narrow band around tape color #5199ed
+_BLUE_UPPER     = np.array([112, 255, 255])
+_WALL_INFLATE_PX = 8   # bigger wall hitbox
+_AGV_HITBOX_PX   = 60  # bigger AGV hitbox (collision radius, raw-frame px)
 
 
 class WallManager:
@@ -23,10 +24,21 @@ class WallManager:
         self.wall_segments: list[WallSegment] = []
         self.occupancy_grid: np.ndarray = np.zeros((grid_rows, grid_cols), dtype=np.uint8)
 
-    def detect_walls(self, image: np.ndarray):
+    def detect_walls(self, image: np.ndarray, border_corners: list[tuple[float, float]] | None = None):
         mask = self._threshold_blue(image)
-        self.wall_segments  = self._find_segments(mask)
+        self.wall_segments = self._find_segments(mask)
+        if border_corners is not None:
+            self.wall_segments += self._border_segments(border_corners)
         self.occupancy_grid = self._rasterize(self.wall_segments, image.shape)
+
+    def add_agv_obstacles(self, positions: list[tuple[float, float]], image_shape: tuple[int, int]):
+        """Mark other AGVs as round obstacles (bigger hitbox) on the occupancy grid."""
+        H, W = image_shape[:2]
+        cell_px  = ((W / self.grid_cols) + (H / self.grid_rows)) / 2.0
+        radius   = max(1, int(_AGV_HITBOX_PX / cell_px))
+        for pos in positions:
+            cell = _px_to_cell(pos, W, H, self.grid_cols, self.grid_rows)
+            cv2.circle(self.occupancy_grid, cell, radius, color=1, thickness=-1)
 
     def find_path(
         self,
@@ -49,19 +61,23 @@ class WallManager:
         return mask
 
     def _find_segments(self, mask: np.ndarray) -> list[WallSegment]:
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        segments = []
-        for cnt in contours:
-            if cv2.contourArea(cnt) < 200:
-                continue
-            (cx, cy), (w, h), angle = cv2.minAreaRect(cnt)
-            angle  = np.radians(angle)
-            half   = max(w, h) / 2.0
-            offset = np.pi / 2 if w < h else 0
-            dx = np.cos(angle + offset) * half
-            dy = np.sin(angle + offset) * half
-            segments.append(WallSegment(start=(cx - dx, cy - dy), end=(cx + dx, cy + dy)))
-        return segments
+        """One wall segment per straight piece of tape (e.g. a triangle yields 3 segments)."""
+        skeleton = _skeletonize(mask)
+        lines = cv2.HoughLinesP(skeleton, 1, np.pi / 180,
+                                 threshold=20, minLineLength=15, maxLineGap=8)
+        if lines is None:
+            return []
+        return [
+            WallSegment(start=(float(x1), float(y1)), end=(float(x2), float(y2)))
+            for x1, y1, x2, y2 in lines.reshape(-1, 4)
+        ]
+
+    def _border_segments(self, corners: list[tuple[float, float]]) -> list[WallSegment]:
+        """Outer field boundary as a quad connecting the 4 corner-marker centers (TL,TR,BR,BL)."""
+        return [
+            WallSegment(start=corners[i], end=corners[(i + 1) % 4])
+            for i in range(4)
+        ]
 
     def _rasterize(self, segments: list[WallSegment], image_shape: tuple) -> np.ndarray:
         grid = np.zeros((self.grid_rows, self.grid_cols), dtype=np.uint8)
@@ -81,6 +97,14 @@ class WallManager:
         grid[:, -1] = 1
 
         return grid
+
+
+def _skeletonize(mask: np.ndarray) -> np.ndarray:
+    """Thin tape blobs to 1px centerlines so Hough finds one clean line per edge."""
+    try:
+        return cv2.ximgproc.thinning(mask)
+    except (AttributeError, cv2.error):
+        return mask
 
 
 def _px_to_cell(px, W, H, cols, rows) -> tuple[int, int]:

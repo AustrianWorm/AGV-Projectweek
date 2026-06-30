@@ -1,5 +1,5 @@
 import cv2
-from ImageRecognition.Arucomanager import Arucomanager, _detect_markers, _make_detector
+from ImageRecognition.Arucomanager import Arucomanager
 
 # Lookup dictionary for ArUco marker IDs mapped to Team Numbers and Member Names
 TEAM_MAPPING = {
@@ -72,43 +72,26 @@ class OpenCVControl:
 
 # ── Debug entry point ─────────────────────────────────────────────────────────
 
-def _annotate_markers(frame, markers):
-    """Draw marker outlines, IDs, and Team details onto frame in-place."""
-    purple_color = (180, 0, 180)  # BGR for Purple
-    
-    for marker in markers.values():
-        pts = marker.corners.astype(int)
-        cv2.polylines(frame, [pts], isClosed=True, color=(0, 200, 0), thickness=2)
-        
-        # Append team info next to the ArUco id
-        label = f"ID:{marker.id}"
-        if marker.id in TEAM_MAPPING:
-            label += f" ({TEAM_MAPPING[marker.id]})"
-            
-        label_pos = (pts[0][0], pts[0][1] - 12)
-        
-        # Larger font scale (0.6), bold thickness (2), purple color
-        cv2.putText(frame, label, label_pos,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, purple_color, 2)
-
-
 def debugCVControl(url: str):
+    """Run the full image-recognition pipeline against the live stream and show it."""
+    from ImageRecognition.ImageAnalyzationController import ImageAnalyzationController
+    from ImageRecognition.WallManager import WallManager
+
     cam      = OpenCVControl(stream_url=url)
-    detector = _make_detector()
+    aruco    = Arucomanager()
+    walls    = WallManager()
+    pipeline = ImageAnalyzationController(cam, aruco, walls)
     cam.connect()
 
-    cv2.namedWindow("Webstream Viewer", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Raw", cv2.WINDOW_NORMAL)
 
     while True:
-        frame = cam.get_frame()
-        if frame is None:
-            continue
+        pipeline.start_image_analysis()
+        vis = pipeline.draw_debug()
 
-        markers = _detect_markers(frame, detector)
-        _annotate_markers(frame, markers)
-
-        cv2.imshow("Webstream Viewer", frame)
+        cv2.imshow("Raw", vis)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
+    pipeline.stop_image_analysis()
     cam.disconnect()

@@ -1,9 +1,11 @@
 import cv2
 import numpy as np
 
-from OpenCvControl import OpenCVControl
-from Arucomanager  import Arucomanager
-from WallManager   import WallManager
+from ImageRecognition.OpenCvControl import OpenCVControl
+from ImageRecognition.Arucomanager  import Arucomanager
+from ImageRecognition.WallManager   import WallManager
+
+GOAL_MARKER_ID = 10  # ArUco marker that marks the maze exit / goal
 
 # Lookup dictionary for ArUco marker IDs mapped to Team Numbers and Member Names
 TEAM_MAPPING = {
@@ -36,15 +38,15 @@ class ImageAnalyzationController:
         self._aruco  = aruco
         self._walls  = walls
 
-        self.raw_frame:  np.ndarray | None = None
-        self.rect_frame: np.ndarray | None = None
+        self.raw_frame: np.ndarray | None = None
 
     # ── Public ────────────────────────────────────────────────────────────────
 
     def start_image_analysis(self) -> bool:
         """
-        Run one full analysis cycle: grab → detect markers → rectify → detect walls.
-        Returns True if a rectified frame was successfully produced.
+        Run one full analysis cycle, entirely in raw (unrectified) camera space:
+        grab → detect markers → detect walls/border → mark AGV hitboxes.
+        Returns True if a frame was successfully grabbed.
         """
         frame = self._camera.get_frame()
         if frame is None:
@@ -53,49 +55,48 @@ class ImageAnalyzationController:
 
         self._aruco.start_aruco_detection(frame)
 
-        if not self._aruco.is_field_locked():
-            return False
-
-        self.rect_frame = self._rectify(frame)
-        self._walls.detect_walls(self.rect_frame)
+        border_corners = self._field_border_corners()
+        self._walls.detect_walls(frame, border_corners)
+        self._walls.add_agv_obstacles(self._agv_positions(), frame.shape)
         return True
 
     def stop_image_analysis(self):
         """Clear analysis state."""
         self._aruco.stop_aruco_detection()
-        self.raw_frame  = None
-        self.rect_frame = None
+        self.raw_frame = None
 
-    def draw_debug(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return (annotated_raw, annotated_rect) for display."""
-        raw_vis  = self._draw_markers(
-            self.raw_frame.copy() if self.raw_frame is not None
-            else np.zeros((480, 640, 3), np.uint8)
-        )
-        rect_vis = self._draw_rect_overlays(
-            self.rect_frame.copy() if self.rect_frame is not None
-            else np.zeros((self._aruco.rect_height, self._aruco.rect_width, 3), np.uint8)
-        )
-        return raw_vis, rect_vis
+    def draw_debug(self) -> np.ndarray:
+        """Return the raw frame annotated with markers, walls/border, and AGV hitboxes."""
+        vis = self.raw_frame.copy() if self.raw_frame is not None else np.zeros((480, 640, 3), np.uint8)
+        self._draw_markers(vis)
+        self._draw_walls(vis)
+        self._draw_agv_hitboxes(vis)
+        self._draw_goal(vis)
+        return vis
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    def _rectify(self, frame: np.ndarray) -> np.ndarray:
-        """Warp raw frame into a clean top-down view using the ArUco warp matrix."""
-        return cv2.warpPerspective(
-            frame,
-            self._aruco.warp_matrix,
-            (self._aruco.rect_width, self._aruco.rect_height),
-        )
+    def _field_border_corners(self) -> list[tuple[float, float]] | None:
+        """Centers of the four corner markers, in raw-frame pixels, if all are visible."""
+        if not self._aruco.is_field_locked():
+            return None
+        return [self._aruco.markers[cid].center for cid in self._aruco.corner_ids]
 
-    def _draw_markers(self, vis: np.ndarray) -> np.ndarray:
-        """Draw marker outlines, IDs, and Team details onto a raw frame copy."""
+    def _agv_positions(self) -> list[tuple[float, float]]:
+        """Raw-frame positions of every AGV marker (anything that isn't a corner or the goal)."""
+        return [
+            pose.center
+            for marker_id, pose in self._aruco.markers.items()
+            if marker_id not in self._aruco.corner_ids and marker_id != GOAL_MARKER_ID
+        ]
+
+    def _draw_markers(self, vis: np.ndarray):
+        """Draw marker outlines, IDs, and Team details in-place."""
         for marker_id, pose in self._aruco.markers.items():
             color = (0, 200, 0) if marker_id != self._aruco.agv_marker_id else (0, 100, 255)
             pts   = pose.corners.astype(int)
             cv2.polylines(vis, [pts], isClosed=True, color=color, thickness=2)
-            
-            # Construct label string with appended team name/members if existing
+
             label = f"ID:{marker_id}"
             if marker_id in TEAM_MAPPING:
                 label += f" ({TEAM_MAPPING[marker_id]})"
@@ -103,31 +104,27 @@ class ImageAnalyzationController:
             cv2.putText(vis, label,
                         (pts[0][0], pts[0][1] - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-        return vis
 
-    def _draw_rect_overlays(self, vis: np.ndarray) -> np.ndarray:
-        """Draw walls, AGV pose, and Team details onto a rectified frame copy."""
-        # Walls (cyan)
+    def _draw_walls(self, vis: np.ndarray):
+        """Draw detected tape walls and field border as bold blue lines, in-place."""
         for seg in self._walls.wall_segments:
             cv2.line(vis,
                      (int(seg.start[0]), int(seg.start[1])),
                      (int(seg.end[0]),   int(seg.end[1])),
-                     (255, 200, 0), 2)
+                     (255, 180, 0), 5)
 
-        # AGV heading arrow (orange)
-        agv = self._aruco.get_agv()
-        if agv is not None:
-            cx, cy = int(agv.center[0]), int(agv.center[1])
-            ex = int(cx + 40 * np.cos(np.radians(agv.heading)))
-            ey = int(cy - 40 * np.sin(np.radians(agv.heading)))
-            cv2.circle(vis, (cx, cy), 6, (0, 100, 255), -1)
-            cv2.arrowedLine(vis, (cx, cy), (ex, ey), (0, 60, 255), 2, tipLength=0.3)
-            
-            # Label on the top-down perspective screen
-            label = f"ID:{agv.id}"
-            if agv.id in TEAM_MAPPING:
-                label += f" ({TEAM_MAPPING[agv.id]})"
-            cv2.putText(vis, label, (cx - 15, cy - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 100, 255), 1)
+    def _draw_agv_hitboxes(self, vis: np.ndarray):
+        """Draw a yellow hitbox circle around every AGV marker (not corners, not the goal), in-place."""
+        for pos in self._agv_positions():
+            cx, cy = int(pos[0]), int(pos[1])
+            cv2.circle(vis, (cx, cy), 60, (0, 220, 255), 3)
 
-        return vis
+    def _draw_goal(self, vis: np.ndarray):
+        """Highlight the goal marker in green, in-place."""
+        goal = self._aruco.markers.get(GOAL_MARKER_ID)
+        if goal is None:
+            return
+        gx, gy = int(goal.center[0]), int(goal.center[1])
+        cv2.circle(vis, (gx, gy), 16, (0, 220, 0), 3)
+        cv2.putText(vis, "GOAL", (gx - 18, gy - 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 0), 1)
