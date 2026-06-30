@@ -160,4 +160,4 @@ class ImageAnalyzationController:
             return
         pts = [(int(x), int(y)) for x, y in self.path]
         for p1, p2 in zip(pts, pts[1:]):
-            cv2.line(vis, p1, p2, (255, 0, 255), 4)
+            cv2.line(vis, p1, p2, (128, 0, 128), 4)

@@ -14,7 +14,7 @@ class MarkerPose:
 # ArUco marker ID of this team's AGV — set before use
 # Corner marker IDs for the four field corners (TL, TR, BR, BL)
 CORNER_IDS = [1, 2, 3, 4]   # update on the day
-AGV_MARKER_ID = 44           # Self: ArUcoMarker 44
+AGV_MARKER_ID = 9           # Self: ArUcoMarker 44
 
 ARUCO_DICT   = cv2.aruco.DICT_4X4_100
 RECT_WIDTH   = 800

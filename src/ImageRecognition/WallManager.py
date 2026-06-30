@@ -32,14 +32,19 @@ class WallManager:
         self.wall_segments: list[WallSegment] = []
         self.occupancy_grid: np.ndarray = np.zeros((grid_rows, grid_cols), dtype=np.uint8)
         self._wall_confidence: np.ndarray | None = None  # per-pixel confidence, builds/decays over frames
+        self._border_corners: list[tuple[float, float]] | None = None  # locked in once seen, kept forever
 
     def detect_walls(self, image: np.ndarray, border_corners: list[tuple[float, float]] | None = None):
         mask = self._threshold_blue(image)
         confirmed_mask = self._update_confidence(mask)
         self.wall_segments = self._find_segments(confirmed_mask)
+
         if border_corners is not None:
-            self.wall_segments += self._border_segments(border_corners)
-        self.occupancy_grid = self._rasterize(self.wall_segments, image.shape)
+            self._border_corners = border_corners  # refresh while visible
+        if self._border_corners is not None:
+            self.wall_segments += self._border_segments(self._border_corners)
+
+        self.occupancy_grid = self._rasterize(self.wall_segments, image.shape, self._border_corners)
 
     def add_agv_obstacles(self, positions: list[tuple[float, float]], image_shape: tuple[int, int]):
         """Mark other AGVs as round obstacles (bigger hitbox) on the occupancy grid."""
@@ -102,7 +107,12 @@ class WallManager:
             for i in range(4)
         ]
 
-    def _rasterize(self, segments: list[WallSegment], image_shape: tuple) -> np.ndarray:
+    def _rasterize(
+        self,
+        segments: list[WallSegment],
+        image_shape: tuple,
+        border_corners: list[tuple[float, float]] | None,
+    ) -> np.ndarray:
         grid = np.zeros((self.grid_rows, self.grid_cols), dtype=np.uint8)
         H, W = image_shape[:2]
 
@@ -114,11 +124,28 @@ class WallManager:
         kernel = np.ones((_WALL_INFLATE_PX * 2 + 1,) * 2, dtype=np.uint8)
         grid   = cv2.dilate(grid, kernel, iterations=1)
 
-        grid[0, :]  = 1
-        grid[-1, :] = 1
-        grid[:, 0]  = 1
-        grid[:, -1] = 1
+        if border_corners is not None:
+            grid = self._block_outside_border(grid, border_corners, W, H)
+        else:
+            # Border not known yet: fall back to walling off the raw image edge.
+            grid[0, :]  = 1
+            grid[-1, :] = 1
+            grid[:, 0]  = 1
+            grid[:, -1] = 1
 
+        return grid
+
+    def _block_outside_border(
+        self, grid: np.ndarray, border_corners: list[tuple[float, float]], W: int, H: int,
+    ) -> np.ndarray:
+        """Mark every cell outside the field-border quad as a wall, so the path can't leave the field."""
+        quad = np.array(
+            [_px_to_cell(c, W, H, self.grid_cols, self.grid_rows) for c in border_corners],
+            dtype=np.int32,
+        )
+        inside = np.zeros_like(grid)
+        cv2.fillConvexPoly(inside, quad, 1)
+        grid[inside == 0] = 1
         return grid
 
 
