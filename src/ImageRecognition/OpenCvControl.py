@@ -1,27 +1,6 @@
+import argparse
 import json
-
 import cv2
-from ImageRecognition.Arucomanager import Arucomanager
-
-# Lookup dictionary for ArUco marker IDs mapped to Team Numbers and Member Names
-TEAM_MAPPING = {
-    100: "Team 22: Wimmer Julian, Schacherbauer Moritz, Kohlmayer David",
-    97: "Team 21: Sigmund Lukas, Falch David",
-    33: "Team 20: Wimmer Jakob, Börner Leon",
-    69: "Team 19: Vorreiter Tobias, Berer Moritz",
-    16: "Team 16: Kolev Victor, Vasic Dorde",
-    42: "Team 15: Bandat Jonathan, Pavalacs Barna",
-    10: "Team 13: Hengstberger Simon, Herejk Simon",
-    9: "Team 12: Mühlbacher Paul, Enzinger Mark",
-    21: "Team 11: Zadny Raphael, Klinger Fabian",
-    73: "Team 9: Medland Ben, Klepp Bastian",
-    24: "Team 8: Barbu Stefan, Wührer-Silberer Simon Hermann",
-    5: "Team 5: Lauss Valentin, Neuhauser Lukas",
-    44: "Team 3: Wojakowski Jakub, Wurmhöringer David",
-    101: "Team 2: Bonitz Timo, Kastner Andreas",
-    67: "Team 1: Wolfsegger Johannes, Wohlfarter Florian"
-}
-
 
 class OpenCVControl:
     def __init__(self, stream_url: str):
@@ -75,28 +54,24 @@ class OpenCVControl:
 # ── Debug entry point ─────────────────────────────────────────────────────────
 
 def _load_config(path: str = "config.json") -> dict:
-    """Read the team's ArUco-ID configuration file."""
+    """Read the team's shared configuration file."""
     with open(path) as f:
         return json.load(f)
 
 
-def _own_and_goal_ids(config: dict) -> tuple[int, int]:
-    """Own AGV marker ID and goal marker ID, as set in config.json."""
-    codes = config["ArUcoCodes"]
-    return codes["ArUcoSelf"], codes["goal"]
-
-
 def debugCVControl(url: str, config_path: str = "config.json"):
-    """Run the full image-recognition pipeline against the live stream and show it."""
+    """Run the full image-recognition pipeline initialized from config.json data."""
     from ImageRecognition.ImageAnalyzationController import ImageAnalyzationController
+    from ImageRecognition.Arucomanager import Arucomanager
     from ImageRecognition.WallManager import WallManager
 
-    own_id, goal_id = _own_and_goal_ids(_load_config(config_path))
+    # Load configuration file object mapping
+    config = _load_config(config_path)
 
     cam      = OpenCVControl(stream_url=url)
-    aruco    = Arucomanager(agv_marker_id=own_id)
-    walls    = WallManager()
-    pipeline = ImageAnalyzationController(cam, aruco, walls, goal_marker_id=goal_id)
+    aruco    = Arucomanager(config=config)
+    walls    = WallManager(config=config)
+    pipeline = ImageAnalyzationController(cam, aruco, walls, config=config)
     cam.connect()
 
     cv2.namedWindow("Raw", cv2.WINDOW_NORMAL)
@@ -111,3 +86,29 @@ def debugCVControl(url: str, config_path: str = "config.json"):
 
     pipeline.stop_image_analysis()
     cam.disconnect()
+
+
+# ── CLI Execution Entrypoint ──────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Start OpenCvControl Pipeline with central configuration.")
+    parser.add_argument(
+        "--config", 
+        type=str, 
+        default="config.json", 
+        help="Path to setup config file (default: config.json)"
+    )
+    args = parser.parse_args()
+
+    # Load file
+    with open(args.config) as f:
+        config = json.load(f)
+
+    # Grab agv stream endpoint
+    stream_url = config["agv"]["agv_url"]
+    
+    print(f"Loaded config from: {args.config}")
+    print(f"Connecting to stream target: {stream_url}")
+    
+    # Run pipeline loop
+    debugCVControl(url=stream_url, config_path=args.config)

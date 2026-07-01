@@ -5,8 +5,6 @@ from ImageRecognition.OpenCvControl import OpenCVControl
 from ImageRecognition.Arucomanager  import Arucomanager
 from ImageRecognition.WallManager   import WallManager
 
-GOAL_MARKER_ID = 10  # ArUco marker that marks the maze exit / goal
-
 # Lookup dictionary for ArUco marker IDs mapped to Team Numbers and Member Names
 TEAM_MAPPING = {
     100: "Team 22: Wimmer Julian, Schacherbauer Moritz, Kohlmayer David",
@@ -33,12 +31,12 @@ class ImageAnalyzationController:
         camera: OpenCVControl,
         aruco:  Arucomanager,
         walls:  WallManager,
-        goal_marker_id: int = GOAL_MARKER_ID,
+        config: dict,
     ):
         self._camera   = camera
         self._aruco    = aruco
         self._walls    = walls
-        self._goal_id  = goal_marker_id
+        self._goal_id  = config.get("ArUcoCodes", {}).get("goal", 10)
 
         self.raw_frame: np.ndarray | None = None
         self.path:      list[tuple[float, float]] = []
@@ -46,11 +44,7 @@ class ImageAnalyzationController:
     # ── Public ────────────────────────────────────────────────────────────────
 
     def start_image_analysis(self) -> bool:
-        """
-        Run one full analysis cycle, entirely in raw (unrectified) camera space:
-        grab → detect markers → detect walls/border → mark AGV hitboxes → plan path.
-        Returns True if a frame was successfully grabbed.
-        """
+        """Run one full analysis cycle, entirely in raw camera space."""
         frame = self._camera.get_frame()
         if frame is None:
             return False
@@ -83,7 +77,7 @@ class ImageAnalyzationController:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _compute_path(self, frame_shape: tuple[int, int, int]):
-        """Re-plan the shortest route to the goal every cycle (corrects for drift as the AGV moves)."""
+        """Re-plan the shortest route to the goal every cycle."""
         agv  = self._aruco.get_agv()
         goal = self._aruco.markers.get(self._goal_id)
         if agv is None or goal is None:
@@ -98,7 +92,7 @@ class ImageAnalyzationController:
         return [self._aruco.markers[cid].center for cid in self._aruco.corner_ids]
 
     def _agv_positions(self) -> list[tuple[float, float]]:
-        """Raw-frame positions of every AGV marker (anything that isn't a corner or the goal)."""
+        """Raw-frame positions of every AGV marker."""
         return [
             pose.center
             for marker_id, pose in self._aruco.markers.items()
@@ -106,7 +100,7 @@ class ImageAnalyzationController:
         ]
 
     def _other_agv_positions(self) -> list[tuple[float, float]]:
-        """Same as above but excludes our own AGV, so it never blocks its own path-planning start."""
+        """Same as above but excludes our own AGV."""
         return [
             pose.center
             for marker_id, pose in self._aruco.markers.items()
@@ -139,7 +133,7 @@ class ImageAnalyzationController:
                      (255, 180, 0), 5)
 
     def _draw_agv_hitboxes(self, vis: np.ndarray):
-        """Draw a yellow hitbox circle around every AGV marker (not corners, not the goal), in-place."""
+        """Draw a yellow hitbox circle around every AGV marker, in-place."""
         for pos in self._agv_positions():
             cx, cy = int(pos[0]), int(pos[1])
             cv2.circle(vis, (cx, cy), 60, (0, 220, 255), 3)
